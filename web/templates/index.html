@@ -52,6 +52,7 @@
             font-size: 1.5rem;
             font-weight: 700;
             background: linear-gradient(to right, #60a5fa, #34d399);
+            background-clip: text;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
@@ -613,13 +614,14 @@
             for (const [srcTbl, tgtTbl] of Object.entries(tableMap)) {
                 const section = document.createElement('div');
                 section.className = 'mb-4';
+                section.setAttribute('data-src-table', srcTbl);
                 
                 let html = `
                     <div style="background: rgba(79, 70, 229, 0.1); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; display: flex; align-items: center; border: 1px solid var(--primary);">
                         <i class="fa-solid fa-table" style="color: var(--primary); margin-right: 0.5rem;"></i>
                         <strong>${srcTbl}</strong>
                         <i class="fa-solid fa-arrow-right mx-2" style="margin: 0 1rem; color: var(--text-muted)"></i>
-                        <select class="tbl-map-select" data-src="${srcTbl}" style="width: auto; padding: 0.25rem;">
+                        <select class="tbl-map-select" data-src="${srcTbl}" onchange="onTargetTableChange(this)" style="width: auto; padding: 0.25rem;">
                             <option value="">-- Ignore --</option>
                 `;
                 
@@ -683,6 +685,72 @@
                 section.innerHTML = html;
                 container.appendChild(section);
             }
+        }
+
+        function syncMappingsFromDom() {
+            if (!currentMappings) return;
+
+            const newTableMap = {};
+            const newColMap = {};
+
+            document.querySelectorAll('.tbl-map-select').forEach(sel => {
+                const src = sel.getAttribute('data-src');
+                if (src && sel.value) {
+                    newTableMap[src] = sel.value;
+                }
+            });
+
+            document.querySelectorAll('.col-map-select').forEach(sel => {
+                if (!sel.value) return;
+                const tbl = sel.getAttribute('data-src-tbl');
+                const col = sel.getAttribute('data-src-col');
+                if (!tbl || !col) return;
+                if (!newColMap[tbl]) newColMap[tbl] = {};
+                newColMap[tbl][col] = sel.value;
+            });
+
+            currentMappings.table_mapping = newTableMap;
+            currentMappings.column_mapping = newColMap;
+        }
+
+        function onTargetTableChange(selectEl) {
+            if (!selectEl || !currentMappings) return;
+
+            // Keep any user changes done before switching target table.
+            syncMappingsFromDom();
+
+            const srcTbl = selectEl.getAttribute('data-src');
+            const tgtTbl = selectEl.value;
+            if (!srcTbl) return;
+
+            if (!currentMappings.table_mapping) currentMappings.table_mapping = {};
+            if (tgtTbl) {
+                currentMappings.table_mapping[srcTbl] = tgtTbl;
+            } else {
+                delete currentMappings.table_mapping[srcTbl];
+            }
+
+            // Drop column mappings that are invalid for the new target table.
+            const mappedCols = (currentMappings.column_mapping && currentMappings.column_mapping[srcTbl])
+                ? currentMappings.column_mapping[srcTbl]
+                : {};
+
+            if (!currentMappings.column_mapping) currentMappings.column_mapping = {};
+
+            if (!tgtTbl || !targetSchema[tgtTbl]) {
+                currentMappings.column_mapping[srcTbl] = {};
+            } else {
+                const allowed = new Set((targetSchema[tgtTbl].columns || []).map(c => c.name));
+                const filtered = {};
+                Object.entries(mappedCols).forEach(([srcCol, tgtCol]) => {
+                    if (allowed.has(tgtCol)) {
+                        filtered[srcCol] = tgtCol;
+                    }
+                });
+                currentMappings.column_mapping[srcTbl] = filtered;
+            }
+
+            renderMappingEditor();
         }
 
         async function saveMappings() {

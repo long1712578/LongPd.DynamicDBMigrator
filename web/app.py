@@ -15,8 +15,7 @@ import os
 import sys
 import threading
 import uuid
-from flask import Flask, render_template, request, jsonify, current_app
-from werkzeug.utils import secure_filename
+from flask import Flask, render_template, request, jsonify
 
 # Ensure db_migrator is in Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -36,6 +35,42 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Global state for background migration tasks
 # In a real production app, use Celery/Redis. For this internal tool, simple dict + thread is fine.
 _migration_tasks = {}
+_migration_tasks_lock = threading.Lock()
+
+
+def _summarize_stats(stats: dict) -> dict:
+    """Aggregate per-table migration stats for status decision and UI messages."""
+    total_success = 0
+    total_errors = 0
+    total_skipped = 0
+    touched_tables = 0
+
+    for _tbl, values in (stats or {}).items():
+        if not isinstance(values, dict):
+            continue
+        touched_tables += 1
+        total_success += int(values.get('success', 0) or 0)
+        total_errors += int(values.get('errors', 0) or 0)
+        total_skipped += int(values.get('skipped', 0) or 0)
+
+    return {
+        'tables': touched_tables,
+        'success': total_success,
+        'errors': total_errors,
+        'skipped': total_skipped,
+    }
+
+
+def _serialize_schema(schema: dict) -> dict:
+    """Convert discovery schema objects to JSON-serializable payload."""
+    result = {}
+    for tbl_name, ts in schema.items():
+        result[tbl_name] = {
+            'name': ts.name,
+            'columns': [{'name': c.name, 'type': c.data_type, 'is_pk': c.is_primary_key} for c in ts.columns],
+            'primary_key': ts.primary_key
+        }
+    return result
 
 @app.route('/')
 def index():
@@ -62,15 +97,7 @@ def discover_from_file():
     try:
         disc = SchemaDiscovery()
         schema = disc.from_sql_file(filepath)
-        
-        # Convert dataclasses to dict for JSON serialization
-        result = {}
-        for tbl_name, ts in schema.items():
-            result[tbl_name] = {
-                'name': ts.name,
-                'columns': [{'name': c.name, 'type': c.data_type, 'is_pk': c.is_primary_key} for c in ts.columns],
-                'primary_key': ts.primary_key
-            }
+        result = _serialize_schema(schema)
             
         return jsonify({
             'success': True,
@@ -90,14 +117,7 @@ def discover_from_mysql():
     try:
         disc = SchemaDiscovery()
         schema = disc.from_mysql(config)
-        
-        result = {}
-        for tbl_name, ts in schema.items():
-            result[tbl_name] = {
-                'name': ts.name,
-                'columns': [{'name': c.name, 'type': c.data_type, 'is_pk': c.is_primary_key} for c in ts.columns],
-                'primary_key': ts.primary_key
-            }
+        result = _serialize_schema(schema)
             
         return jsonify({'success': True, 'schema': result, 'tables': list(result.keys())})
     except Exception as e:
@@ -116,14 +136,7 @@ def discover_from_postgres():
     try:
         disc = SchemaDiscovery()
         schema = disc.from_postgres(config, schema_name)
-        
-        result = {}
-        for tbl_name, ts in schema.items():
-            result[tbl_name] = {
-                'name': ts.name,
-                'columns': [{'name': c.name, 'type': c.data_type, 'is_pk': c.is_primary_key} for c in ts.columns],
-                'primary_key': ts.primary_key
-            }
+        result = _serialize_schema(schema)
             
         return jsonify({'success': True, 'schema': result, 'tables': list(result.keys())})
     except Exception as e:
@@ -181,7 +194,7 @@ def save_mapping():
     try:
         cfg = MigrationConfig()
         
-        # Merge new mappings
+        # Replace mappings for edited tables (do not merge old column keys like id)
         new_table_map = data.get('table_mapping', {})
         new_col_map = data.get('column_mapping', {})
         new_transforms = data.get('value_transforms', {})
@@ -195,19 +208,31 @@ def save_mapping():
             
         if 'table_mapping' not in cfg_data:
             cfg_data['table_mapping'] = {}
-        cfg_data['table_mapping'].update(new_table_map)
+        for src_tbl, tgt_tbl in new_table_map.items():
+            cfg_data['table_mapping'][src_tbl] = tgt_tbl
         
         if 'column_mapping' not in cfg_data:
             cfg_data['column_mapping'] = {}
-            
-        for tbl, cols in new_col_map.items():
-            if tbl not in cfg_data['column_mapping']:
-                cfg_data['column_mapping'][tbl] = {}
-            cfg_data['column_mapping'][tbl].update(cols)
-            
+
+        updated_tables = set(new_table_map.keys()) | set(new_col_map.keys())
+        for tbl in updated_tables:
+            cfg_data['column_mapping'][tbl] = dict(new_col_map.get(tbl, {}))
+
+        if 'value_transforms' not in cfg_data:
+            cfg_data['value_transforms'] = {}
+
+        # Remove old transforms for tables being edited, then write current UI transforms.
+        if updated_tables:
+            cleaned = {}
+            for pattern, spec in cfg_data['value_transforms'].items():
+                left = pattern.split('->', 1)[0].strip()
+                src_tbl = left.split('.', 1)[0].strip() if '.' in left else None
+                if src_tbl in updated_tables:
+                    continue
+                cleaned[pattern] = spec
+            cfg_data['value_transforms'] = cleaned
+
         if new_transforms:
-            if 'value_transforms' not in cfg_data:
-                cfg_data['value_transforms'] = {}
             cfg_data['value_transforms'].update(new_transforms)
             
         cfg.save()
@@ -225,15 +250,16 @@ def start_migration():
     data = request.json or {}
     
     task_id = str(uuid.uuid4())
-    _migration_tasks[task_id] = {
-        'status': 'running',
-        'progress': 0,
-        'logs': [],
-        'stats': {},
-        'current_table': None,
-        'message': 'Đang khởi tạo...',
-        'error': None
-    }
+    with _migration_tasks_lock:
+        _migration_tasks[task_id] = {
+            'status': 'running',
+            'progress': 0,
+            'logs': [],
+            'stats': {},
+            'current_table': None,
+            'message': 'Đang khởi tạo...',
+            'error': None
+        }
     
     # Extract params
     flow = data.get('flow', 'file_to_postgres') # 'file_to_postgres', 'file_to_mysql', 'mysql_to_postgres'
@@ -244,7 +270,10 @@ def start_migration():
     strategy = data.get('strategy', 'truncate_insert')
     
     def run_migration_task(task_id, flow, sql_filename, mysql_config, pg_config, tables, strategy):
-        task = _migration_tasks[task_id]
+        with _migration_tasks_lock:
+            task = _migration_tasks.get(task_id)
+        if task is None:
+            return
         try:
             cfg = MigrationConfig()
             
@@ -276,10 +305,25 @@ def start_migration():
             else:
                 raise ValueError(f"Unknown flow: {flow}")
                 
-            task['status'] = 'completed'
             task['stats'] = stats
-            task['message'] = 'Hoàn thành!'
+            summary = _summarize_stats(stats)
+            task['summary'] = summary
             task['progress'] = 100
+
+            if summary['errors'] > 0 or summary['skipped'] > 0:
+                task['status'] = 'failed'
+                task['error'] = (
+                    f"Migration có vấn đề: success={summary['success']}, "
+                    f"errors={summary['errors']}, skipped={summary['skipped']}"
+                )
+                task['message'] = task['error']
+            elif summary['success'] == 0:
+                task['status'] = 'failed'
+                task['error'] = 'Không có bản ghi nào được migrate. Vui lòng kiểm tra mapping cột, PK và dữ liệu nguồn.'
+                task['message'] = task['error']
+            else:
+                task['status'] = 'completed'
+                task['message'] = 'Hoàn thành!'
             
         except Exception as e:
             import traceback
@@ -305,7 +349,8 @@ def start_migration():
 @app.route('/api/migrate/status/<task_id>', methods=['GET'])
 def get_migration_status(task_id):
     """Poll migration task status."""
-    task = _migration_tasks.get(task_id)
+    with _migration_tasks_lock:
+        task = _migration_tasks.get(task_id)
     if not task:
         return jsonify({'success': False, 'message': 'Task not found'}), 404
         
@@ -316,7 +361,8 @@ def get_migration_status(task_id):
         'current_table': task['current_table'],
         'message': task['message'],
         'error': task['error'],
-        'stats': task.get('stats', {})
+        'stats': task.get('stats', {}),
+        'summary': task.get('summary', {}),
     })
 
 if __name__ == '__main__':

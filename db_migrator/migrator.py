@@ -179,15 +179,18 @@ class DatabaseMigrator:
         # Merge stats to report errors from both phases
         combined = {}
         for tbl in set(list(mysql_stats.keys()) + list(pg_stats.keys())):
-            m = mysql_stats.get(tbl, {"success": 0, "errors": 0})
-            p = pg_stats.get(tbl, {"success": 0, "errors": 0})
+            m = mysql_stats.get(tbl, {"success": 0, "errors": 0, "skipped": 0})
+            p = pg_stats.get(tbl, {"success": 0, "errors": 0, "skipped": 0})
             combined[tbl] = {
                 "success": p["success"],
                 "errors": m["errors"] + p["errors"],
+                "skipped": m.get("skipped", 0) + p.get("skipped", 0),
                 "mysql_success": m["success"],
                 "mysql_errors": m["errors"],
+                "mysql_skipped": m.get("skipped", 0),
                 "pg_success": p["success"],
-                "pg_errors": p["errors"]
+                "pg_errors": p["errors"],
+                "pg_skipped": p.get("skipped", 0),
             }
             
         return combined
@@ -256,7 +259,7 @@ class DatabaseMigrator:
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
 
         for table, td in tables_data.items():
-            s = {"success": 0, "errors": 0}
+            s = {"success": 0, "errors": 0, "skipped": 0}
             stats[table] = s
             total = len(td.inserts)
 
@@ -306,6 +309,7 @@ class DatabaseMigrator:
 
             if not columns:
                 logger.warning(f"  ⚠️  `{table}`: no valid columns to insert")
+                s["skipped"] += total
                 continue
 
             placeholders = ", ".join(["%s"] * len(columns))
@@ -330,7 +334,7 @@ class DatabaseMigrator:
                     self._on_progress(table, idx + 1, total, "importing to MySQL")
 
             conn.commit()
-            logger.info(f"  ✓ `{table}`: {s['success']} inserted, {s['errors']} errors")
+            logger.info(f"  ✓ `{table}`: {s['success']} inserted, {s['errors']} errors, {s['skipped']} skipped")
 
         cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         cursor.close()
@@ -389,34 +393,50 @@ class DatabaseMigrator:
                 logger.info(f"  ⏭️  `{src_table}`: no table mapping, skipping")
                 continue
 
-            s = {"success": 0, "errors": 0}
+            s = {"success": 0, "errors": 0, "skipped": 0}
             stats[src_table] = s
             col_map = self._config.column_mapping(src_table)
             required_defaults = self._config.get_required_defaults(pg_table)
             total = len(td.inserts)
+            identity_always_cols: set[str] = set()
+            try:
+                cursor.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = %s
+                      AND table_name = %s
+                      AND is_identity = 'YES'
+                      AND identity_generation = 'ALWAYS'
+                    """,
+                    (schema, pg_table),
+                )
+                identity_always_cols = {str(r[0]).lower() for r in cursor.fetchall()}
+            except Exception as e:
+                logger.warning(f"  ⚠️  Could not read identity metadata for `{pg_table}`: {e}")
+                conn.rollback()
 
             if not total:
                 logger.info(f"  ⏭️  `{pg_table}`: no source data")
                 continue
 
-            # Fetch Primary Keys for Upsert Strategy
-            pks = ["Id"]
-            if strategy == "upsert":
-                try:
-                    cursor.execute(f"""
-                        SELECT a.attname
-                        FROM   pg_index i
-                        JOIN   pg_attribute a ON a.attrelid = i.indrelid
-                                             AND a.attnum = ANY(i.indkey)
-                        WHERE  i.indrelid = '"{schema}"."{pg_table}"'::regclass
-                        AND    i.indisprimary;
-                    """)
-                    fetched = [r[0] for r in cursor.fetchall()]
-                    if fetched:
-                        pks = fetched
-                except Exception as e:
-                    logger.warning(f"  ⚠️  Could not fetch PKs for `{pg_table}`: {e}")
-                    conn.rollback()
+            # Fetch PK metadata once. PK is mandatory only for upsert conflict handling.
+            pks = ["id"]
+            try:
+                cursor.execute(f"""
+                    SELECT a.attname
+                    FROM   pg_index i
+                    JOIN   pg_attribute a ON a.attrelid = i.indrelid
+                                         AND a.attnum = ANY(i.indkey)
+                    WHERE  i.indrelid = '"{schema}"."{pg_table}"'::regclass
+                    AND    i.indisprimary;
+                """)
+                fetched = [r[0] for r in cursor.fetchall()]
+                if fetched:
+                    pks = fetched
+            except Exception as e:
+                logger.warning(f"  ⚠️  Could not fetch PKs for `{pg_table}`: {e}")
+                conn.rollback()
 
             id_cols_sql = ', '.join([f'"{pk}"' for pk in pks])
             
@@ -453,19 +473,25 @@ class DatabaseMigrator:
                             pg_cols.append(f'"{req_col}"')
                             pg_vals.append(f"'{req_val}'")
                             
-                    # Check if any PK is NULL
+                    # Require non-null PK only for UPSERT.
+                    # For append/truncate_insert, PK can be omitted when DB provides defaults/identity.
                     has_null_pk = False
-                    for pk in pks:
-                        pk_col_name = f'"{pk}"'
-                        if pk_col_name not in pg_cols:
-                            has_null_pk = True
-                            break
-                        val_idx = pg_cols.index(pk_col_name)
-                        if pg_vals[val_idx] == "NULL" or pg_vals[val_idx] is None:
-                            has_null_pk = True
-                            break
+                    if strategy == "upsert":
+                        col_to_val = {
+                            c.strip('"').lower(): v
+                            for c, v in zip(pg_cols, pg_vals)
+                        }
+                        for pk in pks:
+                            pk_key = str(pk).lower()
+                            if pk_key not in col_to_val:
+                                has_null_pk = True
+                                break
+                            if col_to_val[pk_key] == "NULL" or col_to_val[pk_key] is None:
+                                has_null_pk = True
+                                break
 
                     if not pg_cols or has_null_pk:
+                        s["skipped"] += 1
                         if idx < 3:
                             logger.warning(f"  ⚠️  DEBUG SKIP: {pg_table} row {idx} - pg_cols: {pg_cols}, has_null_pk: {has_null_pk}")
                         continue
@@ -488,6 +514,11 @@ class DatabaseMigrator:
                         cursor.execute("SAVEPOINT batch_savepoint")
                         
                         if strategy == "upsert":
+                            needs_override_system = any(
+                                c.strip('"').lower() in identity_always_cols
+                                for c in (batch_cols or [])
+                            )
+                            overriding_clause = " OVERRIDING SYSTEM VALUE" if needs_override_system else ""
                             update_parts = [
                                 f"{c} = EXCLUDED.{c}"
                                 for c in batch_cols if c not in [f'"{pk}"' for pk in pks]
@@ -495,6 +526,7 @@ class DatabaseMigrator:
                             insert_sql = f"""
                                 INSERT INTO "{schema}"."{pg_table}"
                                 ({', '.join(batch_cols)})
+                                {overriding_clause}
                                 VALUES {', '.join(batch_vals_list)}
                             """
                             if update_parts:
@@ -505,9 +537,15 @@ class DatabaseMigrator:
                             else:
                                 insert_sql += f" ON CONFLICT ({id_cols_sql}) DO NOTHING"
                         else:
+                            needs_override_system = any(
+                                c.strip('"').lower() in identity_always_cols
+                                for c in (batch_cols or [])
+                            )
+                            overriding_clause = " OVERRIDING SYSTEM VALUE" if needs_override_system else ""
                             insert_sql = f"""
                                 INSERT INTO "{schema}"."{pg_table}"
                                 ({', '.join(batch_cols)})
+                                {overriding_clause}
                                 VALUES {', '.join(batch_vals_list)}
                             """
                         
@@ -527,7 +565,7 @@ class DatabaseMigrator:
                     self._on_progress(pg_table, idx + 1, total, "syncing to PostgreSQL")
 
             conn.commit()
-            logger.info(f"  ✓ `{pg_table}`: {s['success']} inserted, {s['errors']} errors")
+            logger.info(f"  ✓ `{pg_table}`: {s['success']} inserted, {s['errors']} errors, {s['skipped']} skipped")
 
         # Verify counts
         logger.info("\n📊 Row count verification:")

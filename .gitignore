@@ -1,0 +1,36 @@
+# Python cache/bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS/filesystem noise
+.DS_Store
+Thumbs.db
+
+# Logs and local runtime outputs
+*.log
+*.out
+*.pid
+
+# Local environment files
+.env
+.env.*
+
+# Migration input/output artifacts
+alldatapostgre/*.sql
+alldatapostgre/*.dump
