@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic DB Migrator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --secondary: #10b981;
+            --secondary-hover: #059669;
+            --bg-dark: #0f172a;
+            --surface-dark: #1e293b;
+            --surface-border: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-main);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--surface-border);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #60a5fa, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        /* Steps UI */
+        .step-container {
+            background: var(--surface-dark);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .step-container.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .step-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--surface-border);
+            padding-bottom: 1rem;
+        }
+
+        .step-number {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 1rem;
+        }
+
+        .step-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        /* Form Elements */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        input[type="text"],
+        input[type="password"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: #0f172a;
+            border: 1px solid var(--surface-border);
+            border-radius: 8px;
+            color: var(--text-main);
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            color: white;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+        }
+
+        .btn-secondary {
+            background: var(--secondary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--secondary-hover);
+        }
+        
+        .btn-full {
+            width: 100%;
+            text-align: center;
+        }
+
+        /* Tables list */
+        .table-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .table-item {
+            background: rgba(15, 23, 42, 0.5);
+            border: 1px solid var(--surface-border);
+            padding: 1rem;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .table-item:hover {
+            border-color: var(--primary);
+        }
+
+        .table-item input[type="checkbox"] {
+            margin-right: 1rem;
+            width: 1.2rem;
+            height: 1.2rem;
+            accent-color: var(--primary);
+        }
+
+        /* Mapping Editor */
+        .mapping-grid {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            background: #0f172a;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--surface-border);
+        }
+
+        .col-info {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .col-type {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            background: var(--surface-dark);
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .mapping-icon {
+            color: var(--text-muted);
+        }
+
+        /* Progress */
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: var(--surface-border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 1rem 0;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--secondary);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .log-panel {
+            background: #0f172a;
+            border: 1px solid var(--surface-border);
+            border-radius: 8px;
+            padding: 1rem;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.875rem;
+            color: #a7f3d0;
+        }
+
+        /* Utilities */
+        .flex-between {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+        
+        .mt-4 { margin-top: 1rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: var(--surface-dark);
+            border-left: 4px solid var(--primary);
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 50;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header">
+        <h1><i class="fa-solid fa-database"></i> Dynamic DB Migrator</h1>
+        <div>
+            <span class="version">v2.0</span>
+        </div>
+    </header>
+
+    <div class="container">
+        
+        <!-- STEP 1: Connection Setup -->
+        <div class="step-container" id="step1">
+            <div class="step-header">
+                <div class="step-number">1</div>
+                <div class="step-title">Connection Setup</div>
+            </div>
+            
+            <div class="grid-2">
+                <!-- Source -->
+                <div>
+                    <h3 class="mb-4">Source Database</h3>
+                    <div class="form-group">
+                        <label>Migration Flow</label>
+                        <select id="flowType" onchange="toggleFlowInputs()">
+                            <option value="file_to_postgres">SQL File → MySQL → PostgreSQL</option>
+                            <option value="mysql_to_postgres">MySQL → PostgreSQL</option>
+                        </select>
+                    </div>
+                    
+                    <div id="fileInputContainer" class="form-group">
+                        <label>SQL File Name (inside alldatapostgre folder)</label>
+                        <input type="text" id="sqlFilename" placeholder="e.g., backup.sql">
+                    </div>
+                    
+                    <h3 class="mt-4 mb-4">MySQL Settings (Local Intermediary / Source)</h3>
+                    <div class="grid-2">
+                        <div class="form-group"><label>Host</label><input type="text" id="myHost" value="localhost"></div>
+                        <div class="form-group"><label>Port</label><input type="number" id="myPort" value="3306"></div>
+                    </div>
+                    <div class="form-group"><label>Database</label><input type="text" id="myDb" value="test_db"></div>
+                    <div class="grid-2">
+                        <div class="form-group"><label>User</label><input type="text" id="myUser" value="root"></div>
+                        <div class="form-group"><label>Password</label><input type="password" id="myPwd" value=""></div>
+                    </div>
+                </div>
+                
+                <!-- Target -->
+                <div>
+                    <h3 class="mb-4">Target Database (PostgreSQL)</h3>
+                    <div class="grid-2">
+                        <div class="form-group"><label>Host</label><input type="text" id="pgHost" value="localhost"></div>
+                        <div class="form-group"><label>Port</label><input type="number" id="pgPort" value="5432"></div>
+                    </div>
+                    <div class="form-group"><label>Database</label><input type="text" id="pgDb" value="hrm"></div>
+                    <div class="grid-2">
+                        <div class="form-group"><label>User</label><input type="text" id="pgUser" value="postgres"></div>
+                        <div class="form-group"><label>Password</label><input type="password" id="pgPwd" value=""></div>
+                    </div>
+                    <div class="form-group"><label>Schema</label><input type="text" id="pgSchema" value="hrm-services"></div>
+                </div>
+            </div>
+            
+            <div class="mt-4">
+                <button class="btn btn-primary" onclick="discoverSchemas()">
+                    <i class="fa-solid fa-magnifying-glass"></i> Discover Schemas
+                </button>
+            </div>
+        </div>
+
+        <!-- STEP 2: Select Tables -->
+        <div class="step-container disabled" id="step2">
+            <div class="step-header">
+                <div class="step-number">2</div>
+                <div class="step-title">Select Tables to Migrate</div>
+            </div>
+            
+            <div class="flex-between">
+                <span>Select the tables you want to sync from Source to Target.</span>
+                <div>
+                    <button class="btn" style="background: var(--surface-border)" onclick="selectAllTables(true)">Select All</button>
+                    <button class="btn" style="background: var(--surface-border)" onclick="selectAllTables(false)">Clear</button>
+                </div>
+            </div>
+            
+            <div class="table-list" id="tablesContainer">
+                <!-- Populated via JS -->
+            </div>
+            
+            <div class="mt-4">
+                <button class="btn btn-primary" onclick="suggestMappings()">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Suggest Mappings
+                </button>
+            </div>
+        </div>
+
+        <!-- STEP 3: Mapping & Transform -->
+        <div class="step-container disabled" id="step3">
+            <div class="step-header">
+                <div class="step-number">3</div>
+                <div class="step-title">Review Mappings</div>
+            </div>
+            
+            <div id="mappingContainer">
+                <!-- Populated via JS -->
+                <p class="text-muted">Loading mappings...</p>
+            </div>
+            
+            <div class="mt-4">
+                <button class="btn btn-primary" onclick="saveMappings()">
+                    <i class="fa-solid fa-floppy-disk"></i> Save Configuration
+                </button>
+            </div>
+        </div>
+
+        <!-- STEP 4: Execution -->
+        <div class="step-container disabled" id="step4">
+            <div class="step-header">
+                <div class="step-number">4</div>
+                <div class="step-title">Execute Migration</div>
+            </div>
+            
+            <div class="form-group" style="max-width: 300px;">
+                <label>Migration Strategy</label>
+                <select id="strategy">
+                    <option value="truncate_insert">Truncate + Insert (Recommended)</option>
+                    <option value="upsert">Upsert (ON CONFLICT DO UPDATE)</option>
+                    <option value="append">Append (Insert only)</option>
+                </select>
+            </div>
+            
+            <button class="btn btn-secondary btn-full mt-4" onclick="startMigration()" id="btnStartSync">
+                <i class="fa-solid fa-play"></i> START MIGRATION
+            </button>
+            
+            <div id="progressSection" class="hidden mt-4">
+                <div class="flex-between">
+                    <span id="currentStatusText">Initializing...</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                
+                <h4 class="mt-4 mb-4">Execution Logs</h4>
+                <div class="log-panel" id="logPanel">
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast">Message here</div>
+
+    <script>
+        // State
+        let sourceSchema = null;
+        let targetSchema = null;
+        let currentMappings = null;
+        let migrationTaskId = null;
+        let pollInterval = null;
+
+        function showToast(msg, isError=false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.style.borderLeftColor = isError ? 'var(--danger)' : 'var(--primary)';
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        function toggleFlowInputs() {
+            const flow = document.getElementById('flowType').value;
+            const fileContainer = document.getElementById('fileInputContainer');
+            if (flow === 'mysql_to_postgres') {
+                fileContainer.style.display = 'none';
+            } else {
+                fileContainer.style.display = 'block';
+            }
+        }
+
+        function getMysqlConfig() {
+            return {
+                host: document.getElementById('myHost').value,
+                port: parseInt(document.getElementById('myPort').value),
+                database: document.getElementById('myDb').value,
+                user: document.getElementById('myUser').value,
+                password: document.getElementById('myPwd').value
+            };
+        }
+
+        function getPgConfig() {
+            return {
+                host: document.getElementById('pgHost').value,
+                port: parseInt(document.getElementById('pgPort').value),
+                database: document.getElementById('pgDb').value,
+                user: document.getElementById('pgUser').value,
+                password: document.getElementById('pgPwd').value
+            };
+        }
+
+        async function discoverSchemas() {
+            const flow = document.getElementById('flowType').value;
+            
+            try {
+                // 1. Discover Target (PG)
+                const pgRes = await fetch('/api/discover/postgres', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        config: getPgConfig(),
+                        schema: document.getElementById('pgSchema').value
+                    })
+                }).then(r => r.json());
+                
+                if (!pgRes.success) throw new Error(pgRes.message);
+                targetSchema = pgRes.schema;
+
+                // 2. Discover Source
+                let srcRes;
+                if (flow === 'file_to_postgres') {
+                    const fname = document.getElementById('sqlFilename').value;
+                    srcRes = await fetch('/api/discover/file', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({filename: fname})
+                    }).then(r => r.json());
+                } else {
+                    srcRes = await fetch('/api/discover/mysql', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(getMysqlConfig())
+                    }).then(r => r.json());
+                }
+                
+                if (!srcRes.success) throw new Error(srcRes.message);
+                sourceSchema = srcRes.schema;
+
+                // Populate Tables UI
+                renderTablesList(srcRes.tables);
+                document.getElementById('step2').classList.remove('disabled');
+                showToast("Schemas discovered successfully!");
+                
+            } catch (err) {
+                showToast(err.message, true);
+            }
+        }
+
+        function renderTablesList(tables) {
+            const container = document.getElementById('tablesContainer');
+            container.innerHTML = '';
+            tables.forEach(tbl => {
+                const div = document.createElement('label');
+                div.className = 'table-item';
+                div.innerHTML = `
+                    <input type="checkbox" value="${tbl}" class="tbl-checkbox" checked>
+                    <span>${tbl}</span>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function selectAllTables(checked) {
+            document.querySelectorAll('.tbl-checkbox').forEach(cb => cb.checked = checked);
+        }
+
+        function getSelectedTables() {
+            return Array.from(document.querySelectorAll('.tbl-checkbox:checked')).map(cb => cb.value);
+        }
+
+        async function suggestMappings() {
+            const selectedTables = getSelectedTables();
+            if (selectedTables.length === 0) {
+                showToast("Please select at least one table", true);
+                return;
+            }
+
+            // Filter source schema to only selected tables
+            const filteredSrcSchema = {};
+            selectedTables.forEach(t => {
+                if (sourceSchema[t]) filteredSrcSchema[t] = sourceSchema[t];
+            });
+
+            try {
+                const res = await fetch('/api/mapping/suggest', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        source_schema: filteredSrcSchema,
+                        target_schema: targetSchema
+                    })
+                }).then(r => r.json());
+                
+                if (!res.success) throw new Error(res.message);
+                
+                currentMappings = res.mapping;
+                renderMappingEditor();
+                document.getElementById('step3').classList.remove('disabled');
+                showToast("Mappings generated!");
+                
+            } catch(err) {
+                showToast(err.message, true);
+            }
+        }
+
+        function renderMappingEditor() {
+            const container = document.getElementById('mappingContainer');
+            container.innerHTML = '';
+            
+            const tableMap = currentMappings.table_mapping || {};
+            const colMap = currentMappings.column_mapping || {};
+            
+            for (const [srcTbl, tgtTbl] of Object.entries(tableMap)) {
+                const section = document.createElement('div');
+                section.className = 'mb-4';
+                
+                let html = `
+                    <div style="background: rgba(79, 70, 229, 0.1); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; display: flex; align-items: center; border: 1px solid var(--primary);">
+                        <i class="fa-solid fa-table" style="color: var(--primary); margin-right: 0.5rem;"></i>
+                        <strong>${srcTbl}</strong>
+                        <i class="fa-solid fa-arrow-right mx-2" style="margin: 0 1rem; color: var(--text-muted)"></i>
+                        <select class="tbl-map-select" data-src="${srcTbl}" style="width: auto; padding: 0.25rem;">
+                            <option value="">-- Ignore --</option>
+                `;
+                
+                // Target tables options
+                for (const t of Object.keys(targetSchema)) {
+                    const sel = t === tgtTbl ? 'selected' : '';
+                    html += `<option value="${t}" ${sel}>${t}</option>`;
+                }
+                
+                html += `</select></div>`;
+                
+                // Columns
+                const cols = colMap[srcTbl] || {};
+                const srcCols = sourceSchema[srcTbl]?.columns || [];
+                const tgtCols = targetSchema[tgtTbl]?.columns || [];
+                
+                srcCols.forEach(sc => {
+                    const mappedTgt = cols[sc.name] || '';
+                    html += `
+                        <div class="mapping-grid" style="grid-template-columns: 1fr auto 1fr 1fr;">
+                            <div class="col-info">
+                                <span>${sc.name}</span>
+                                <span class="col-type">${sc.type}</span>
+                            </div>
+                            <div class="mapping-icon"><i class="fa-solid fa-arrow-right"></i></div>
+                            <div>
+                                <select class="col-map-select" data-src-tbl="${srcTbl}" data-src-col="${sc.name}" style="padding: 0.25rem; width: 100%;">
+                                    <option value="">-- Ignore Column --</option>
+                    `;
+                    tgtCols.forEach(tc => {
+                        const sel = tc.name === mappedTgt ? 'selected' : '';
+                        html += `<option value="${tc.name}" ${sel}>${tc.name} (${tc.type})</option>`;
+                    });
+                    
+                    // Determine which transform is selected
+                    const transforms = currentMappings.value_transforms || {};
+                    let selectedTransform = "";
+                    for (const [pattern, spec] of Object.entries(transforms)) {
+                        if (pattern === `${srcTbl}.${sc.name} -> ${tgtTbl}.${mappedTgt}` || 
+                            pattern === `*.${sc.name} -> *.${mappedTgt}`) {
+                            selectedTransform = spec.type || "";
+                            break;
+                        }
+                    }
+
+                    html += `</select>
+                            </div>
+                            <div>
+                                <select class="transform-select" data-src-tbl="${srcTbl}" data-src-col="${sc.name}" style="padding: 0.25rem; width: 100%;">
+                                    <option value="">-- Auto Transform --</option>
+                                    <option value="null_to_bool" ${selectedTransform === 'null_to_bool' ? 'selected' : ''}>Null -> Bool (false/true)</option>
+                                    <option value="timestamp" ${selectedTransform === 'timestamp' ? 'selected' : ''}>Parse Timestamp</option>
+                                    <option value="json_normalize" ${selectedTransform === 'json_normalize' ? 'selected' : ''}>Normalize JSON</option>
+                                    <option value="enum_to_int" ${selectedTransform === 'enum_to_int' ? 'selected' : ''}>Enum -> Integer</option>
+                                    <option value="passthrough" ${selectedTransform === 'passthrough' ? 'selected' : ''}>Raw (No escape)</option>
+                                </select>
+                            </div>
+                        </div>`;
+                });
+                
+                section.innerHTML = html;
+                container.appendChild(section);
+            }
+        }
+
+        async function saveMappings() {
+            // Rebuild mapping from DOM
+            const newTableMap = {};
+            const newColMap = {};
+            const newTransforms = {};
+            
+            document.querySelectorAll('.tbl-map-select').forEach(sel => {
+                if (sel.value) newTableMap[sel.getAttribute('data-src')] = sel.value;
+            });
+            
+            document.querySelectorAll('.col-map-select').forEach(sel => {
+                if (sel.value) {
+                    const tbl = sel.getAttribute('data-src-tbl');
+                    const col = sel.getAttribute('data-src-col');
+                    if (!newColMap[tbl]) newColMap[tbl] = {};
+                    newColMap[tbl][col] = sel.value;
+                    
+                    // Check if there is a transform selected
+                    const transformSelect = document.querySelector(`.transform-select[data-src-tbl="${tbl}"][data-src-col="${col}"]`);
+                    if (transformSelect && transformSelect.value) {
+                        const pattern = `${tbl}.${col} -> ${newTableMap[tbl] || '*'}.${sel.value}`;
+                        newTransforms[pattern] = { "type": transformSelect.value };
+                    }
+                }
+            });
+            
+            try {
+                const res = await fetch('/api/mapping/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        target_schema: document.getElementById('pgSchema').value,
+                        table_mapping: newTableMap,
+                        column_mapping: newColMap,
+                        value_transforms: newTransforms
+                    })
+                }).then(r => r.json());
+                
+                if (!res.success) throw new Error(res.message);
+                
+                document.getElementById('step4').classList.remove('disabled');
+                showToast("Configuration saved!");
+                
+            } catch(err) {
+                showToast(err.message, true);
+            }
+        }
+
+        async function startMigration() {
+            const flow = document.getElementById('flowType').value;
+            const sqlFilename = document.getElementById('sqlFilename').value;
+            const strategy = document.getElementById('strategy').value;
+            const tables = getSelectedTables();
+            
+            document.getElementById('progressSection').classList.remove('hidden');
+            document.getElementById('btnStartSync').disabled = true;
+            document.getElementById('logPanel').innerHTML = '';
+            
+            try {
+                const res = await fetch('/api/migrate/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        flow: flow,
+                        sql_filename: sqlFilename,
+                        mysql_config: getMysqlConfig(),
+                        pg_config: getPgConfig(),
+                        target_schema: document.getElementById('pgSchema').value,
+                        tables: tables,
+                        strategy: strategy
+                    })
+                }).then(r => r.json());
+                
+                if (!res.success) throw new Error(res.message);
+                
+                migrationTaskId = res.task_id;
+                pollInterval = setInterval(pollStatus, 1000);
+                
+            } catch(err) {
+                showToast(err.message, true);
+                document.getElementById('btnStartSync').disabled = false;
+            }
+        }
+
+        async function pollStatus() {
+            if (!migrationTaskId) return;
+            
+            try {
+                const res = await fetch(`/api/migrate/status/${migrationTaskId}`).then(r => r.json());
+                
+                if (res.success) {
+                    document.getElementById('progressBar').style.width = `${res.progress}%`;
+                    document.getElementById('progressPercent').textContent = `${res.progress}%`;
+                    document.getElementById('currentStatusText').textContent = res.message;
+                    
+                    if (res.status === 'completed' || res.status === 'failed') {
+                        clearInterval(pollInterval);
+                        document.getElementById('btnStartSync').disabled = false;
+                        
+                        if (res.status === 'completed') {
+                            showToast("Migration completed successfully!");
+                            // append final stats
+                            const lp = document.getElementById('logPanel');
+                            lp.innerHTML += `<div style="color: var(--secondary); margin-top: 10px;"><b>MIGRATION COMPLETED!</b></div>`;
+                            lp.innerHTML += `<div>Stats: ${JSON.stringify(res.stats, null, 2)}</div>`;
+                        } else {
+                            showToast("Migration failed!", true);
+                            document.getElementById('logPanel').innerHTML += `<div style="color: var(--danger)"><b>ERROR:</b> ${res.error}</div>`;
+                        }
+                    }
+                }
+            } catch(err) {
+                console.error("Poll error:", err);
+            }
+        }
+    </script>
+</body>
+</html>

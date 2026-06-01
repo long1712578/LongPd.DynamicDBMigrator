@@ -1,0 +1,168 @@
+{
+  "version": "2.0",
+  "target_schema": "purchase-services",
+  "table_mapping": {
+    "org_unit": "office-org-unit",
+    "position": "office-position",
+    "user": "office-employee",
+    "user_movement": "office-employee-movement",
+    "user_org_unit_position": "office-employee-org-unit-position"
+  },
+  "column_mapping": {
+    "org_unit": {
+      "createdAt": "SyncCreatedDate",
+      "createdById": "SyncCreatedBy",
+      "deletedAt": "IsDeleted",
+      "id": "Id",
+      "managerId": "ManagerId",
+      "name": "Name",
+      "parentId": "ParentId",
+      "status": "Status",
+      "totalMember": "TotalMember",
+      "type": "Type",
+      "updatedAt": "SyncUpdatedDate",
+      "updatedById": "SyncUpdatedBy",
+      "description": "Description",
+      "deletedById": "Id"
+    },
+    "position": {
+      "createdAt": "CreatedDate",
+      "createdById": "SyncCreatedBy",
+      "deletedAt": "IsDeleted",
+      "description": "Description",
+      "id": "Id",
+      "level": "Level",
+      "name": "Name",
+      "parentId": "ParentId",
+      "status": "Status",
+      "subManager": "SubManager",
+      "type": "Type",
+      "updatedAt": "LastModifiedDate",
+      "updatedById": "SyncUpdatedBy"
+    },
+    "user": {
+      "address": "Address",
+      "birthday": "Birthday",
+      "cccd": "PersonalId",
+      "code": "Code",
+      "createdAt": "SyncCreatedDate",
+      "createdById": "SyncCreatedBy",
+      "dateEndWork": "DateEndWork",
+      "dateOnboard": "DateOnboard",
+      "deletedAt": "IsDeleted",
+      "email": "Email",
+      "gender": "Gender",
+      "id": "Id",
+      "name": "Name",
+      "officialStatus": "OfficialStatus",
+      "orgUnitName": "OrgUnitName",
+      "phone": "Phone",
+      "status": "Status",
+      "tempAddress": "TempAddress",
+      "types": "Types",
+      "updatedAt": "SyncUpdatedDate",
+      "updatedById": "SyncUpdatedBy",
+      "url": "Url"
+    },
+    "user_movement": {
+      "createdAt": "SyncCreatedDate",
+      "createdById": "SyncCreatedBy",
+      "dateAppointment": "AppointmentDate",
+      "deletedAt": "IsDeleted",
+      "id": "Id",
+      "newValue": "NewValueJson",
+      "oldValue": "OldValueJson",
+      "orgUnitId": "OrgUnitId",
+      "positionId": "PositionId",
+      "type": "Type",
+      "updatedAt": "SyncUpdatedDate",
+      "updatedById": "SyncUpdatedBy",
+      "userId": "EmployeeId",
+      "userTitleId": "EmployeeTitleId"
+    },
+    "user_org_unit_position": {
+      "deletedAt": "IsDeleted",
+      "id": "Id",
+      "orgUnitId": "OrgUnitId",
+      "positionId": "PositionId",
+      "positionType": "PositionType",
+      "status": "Status",
+      "userId": "EmployeeId",
+      "createdAt": "CreatedDate",
+      "updatedAt": "LastModifiedDate"
+    }
+  },
+  "type_overrides": {
+    "user.types": "jsonb",
+    "user_movement.type": "integer"
+  },
+  "value_transforms": {
+    "*.deletedAt -> *.IsDeleted": {
+      "type": "null_to_bool"
+    },
+    "user.types -> *.Types": {
+      "type": "json_normalize",
+      "default": "[]",
+      "cast": "jsonb"
+    },
+    "user_movement.type -> *.Type": {
+      "type": "enum_to_int",
+      "mapping": {
+        "Bổ nhiệm": 1,
+        "Điều chuyển": 2,
+        "Miễn nhiệm": 3
+      }
+    },
+    "*.createdAt -> *.SyncCreatedDate": {
+      "type": "timestamp"
+    },
+    "*.updatedAt -> *.SyncUpdatedDate": {
+      "type": "timestamp"
+    },
+    "*.dateOnboard -> *.DateOnboard": {
+      "type": "timestamp"
+    },
+    "*.dateEndWork -> *.DateEndWork": {
+      "type": "timestamp"
+    },
+    "*.birthday -> *.Birthday": {
+      "type": "timestamp"
+    },
+    "*.dateAppointment -> *.AppointmentDate": {
+      "type": "timestamp"
+    },
+    "org_unit.createdAt -> office-org-unit.SyncCreatedDate": {
+      "type": "timestamp"
+    },
+    "org_unit.updatedAt -> office-org-unit.SyncUpdatedDate": {
+      "type": "timestamp"
+    },
+    "org_unit.deletedAt -> office-org-unit.IsDeleted": {
+      "type": "null_to_bool"
+    }
+  },
+  "custom_rules": {
+    "enum_mapping": {
+      "user_movement": {
+        "type": {
+          "Bổ nhiệm": "1",
+          "Miễn nhiệm": "3",
+          "Điều chuyển": "2"
+        }
+      }
+    },
+    "ignored_source_columns": {
+      "user": [
+        "factory"
+      ]
+    },
+    "required_defaults": {
+      "office-org-unit": {
+        "TotalMember": "0"
+      },
+      "office-position": {
+        "Level": "1"
+      }
+    }
+  }
+}
