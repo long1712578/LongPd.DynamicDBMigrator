@@ -513,6 +513,242 @@ def get_migration_status(task_id):
         'summary': task.get('summary', {}),
     })
 
+
+# ---------------------------------------------------------------------------
+# API: AI Agent (Phase 3)
+# ---------------------------------------------------------------------------
+
+def _get_agent(schema_cache: dict | None = None):
+    """
+    Tạo MigrationAgent instance với GeminiProvider.
+
+    Lazy init: Chỉ khởi tạo khi được gọi, không block startup.
+    GeminiProvider sẽ log warning nếu thiếu API key.
+    """
+    from db_migrator.agent import GeminiProvider, MigrationAgent  # noqa: PLC0415
+    provider = GeminiProvider()  # Đọc GEMINI_API_KEY từ env
+    return MigrationAgent(llm_provider=provider, schema_cache=schema_cache or {})
+
+
+@app.route('/api/agent/chat', methods=['POST'])
+def agent_chat():
+    """
+    Chat với AI Migration Assistant.
+
+    Request body:
+        {
+            "message": "Phân tích schema bảng users cho tôi",
+            "session_id": "optional-session-id"
+        }
+
+    Response:
+        {
+            "success": true,
+            "answer": "...",
+            "tools_used": ["analyze_schema"],
+            "rounds": 2,
+            "tokens_used": 150
+        }
+    """
+    data = request.json or {}
+    message = data.get('message', '').strip()
+
+    if not message:
+        return jsonify({'success': False, 'message': 'Thiếu trường message'}), 400
+
+    if len(message) > 4000:
+        return jsonify({'success': False, 'message': 'Message quá dài (tối đa 4000 ký tự)'}), 400
+
+    try:
+        agent = _get_agent()
+        result = agent.run(message)
+        _audit.log_event("agent.chat", {
+            "message_preview": message[:100],
+            "rounds": result.rounds,
+            "tokens": result.tokens_used,
+            "success": result.success,
+        })
+        return jsonify({
+            'success': True,
+            'answer': result.answer,
+            'tools_used': result.tools_used,
+            'rounds': result.rounds,
+            'tokens_used': result.tokens_used,
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.error("Agent chat error: %s", e)
+        return jsonify({'success': False, 'message': f'Agent error: {e}'}), 500
+
+
+@app.route('/api/agent/analyze', methods=['POST'])
+def agent_analyze():
+    """
+    Phân tích data anomalies trước migration.
+
+    Request body:
+        {
+            "table": "users",
+            "columns": ["id", "name", "email"],
+            "rows": [[1, "Long", "long@test.com"], ...],
+            "source_types": {"id": "int(11)", "name": "varchar(50)"},
+            "target_types": {"id": "integer", "name": "varchar(100)"}
+        }
+
+    Response:
+        {
+            "success": true,
+            "is_safe": true,
+            "report": {
+                "critical": 0,
+                "warning": 1,
+                "anomalies": [...]
+            }
+        }
+    """
+    data = request.json or {}
+    table = data.get('table', 'unknown')
+    columns = data.get('columns', [])
+    rows = data.get('rows', [])
+    source_types = data.get('source_types', {})
+    target_types = data.get('target_types', {})
+
+    if not columns:
+        return jsonify({'success': False, 'message': 'Thiếu danh sách columns'}), 400
+
+    try:
+        from db_migrator.agent import AnomalyDetector  # noqa: PLC0415
+        detector = AnomalyDetector()
+        report = detector.check_table_data(
+            table_name=table,
+            columns=columns,
+            rows=[tuple(r) for r in rows],
+            source_types=source_types,
+            target_types=target_types,
+        )
+        _audit.log_event("agent.analyze", {
+            "table": table,
+            "rows_checked": len(rows),
+            "anomalies_found": len(report.anomalies),
+            "is_safe": report.is_safe_to_migrate,
+        })
+        return jsonify({
+            'success': True,
+            'is_safe': report.is_safe_to_migrate,
+            'report': report.to_dict(),
+            'summary': report.get_summary(),
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.error("Agent analyze error: %s", e)
+        return jsonify({'success': False, 'message': f'Analysis error: {e}'}), 500
+
+
+@app.route('/api/agent/suggest-mapping', methods=['POST'])
+def agent_suggest_mapping():
+    """
+    Gợi ý AI-enhanced column mapping giữa source và target.
+
+    Request body:
+        {
+            "source_table": "mysql_users",
+            "source_cols": ["id", "user_name", "deletedAt"],
+            "target_table": "pg_users",
+            "target_cols": ["id", "username", "is_deleted"]
+        }
+
+    Response:
+        {
+            "success": true,
+            "suggestions": [
+                {"source": "id", "target": "id", "confidence": 1.0, "method": "exact"},
+                {"source": "user_name", "target": "username", "confidence": 0.9, "method": "normalized"}
+            ],
+            "unmatched_source": [],
+            "unmatched_target": []
+        }
+    """
+    data = request.json or {}
+    source_table = data.get('source_table', 'source')
+    source_cols = data.get('source_cols', [])
+    target_table = data.get('target_table', 'target')
+    target_cols = data.get('target_cols', [])
+
+    if not source_cols or not target_cols:
+        return jsonify({'success': False, 'message': 'Thiếu source_cols hoặc target_cols'}), 400
+
+    try:
+        from db_migrator.agent import GeminiProvider, SmartMapper  # noqa: PLC0415
+        # Thử dùng Gemini nếu có key, fallback sang rule-based
+        provider = None
+        if os.environ.get('GEMINI_API_KEY'):
+            provider = GeminiProvider()
+
+        mapper = SmartMapper(llm_provider=provider)
+        result = mapper.suggest(
+            source_table=source_table,
+            source_cols=source_cols,
+            target_table=target_table,
+            target_cols=target_cols,
+        )
+        _audit.log_event("agent.suggest_mapping", {
+            "source_table": source_table,
+            "target_table": target_table,
+            "suggestions_count": len(result.suggestions),
+        })
+        return jsonify({
+            'success': True,
+            'result': result.to_dict(),
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.error("Suggest mapping error: %s", e)
+        return jsonify({'success': False, 'message': f'Mapping error: {e}'}), 500
+
+
+@app.route('/api/agent/explain-error', methods=['POST'])
+def agent_explain_error():
+    """
+    Giải thích lỗi migration bằng ngôn ngữ tự nhiên.
+
+    Request body:
+        {
+            "error": "ERROR: null value in column ...",
+            "table": "orders"
+        }
+
+    Response:
+        {
+            "success": true,
+            "category": "not_null",
+            "title": "Vi phạm NOT NULL Constraint",
+            "explanation": "...",
+            "remediation": ["step 1", "step 2"]
+        }
+    """
+    data = request.json or {}
+    error_text = data.get('error', '').strip()
+    table = data.get('table')
+
+    if not error_text:
+        return jsonify({'success': False, 'message': 'Thiếu trường error'}), 400
+
+    try:
+        from db_migrator.agent import ErrorExplainer, GeminiProvider  # noqa: PLC0415
+        provider = None
+        if os.environ.get('GEMINI_API_KEY'):
+            provider = GeminiProvider()
+
+        explainer = ErrorExplainer(llm_provider=provider)
+        explained = explainer.explain(error_text, table=table)
+
+        return jsonify({
+            'success': True,
+            'explanation': explained.to_dict(),
+            'formatted': explained.format_for_user(),
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.error("Explain error: %s", e)
+        return jsonify({'success': False, 'message': f'Error: {e}'}), 500
+
+
 if __name__ == '__main__':
     print("=" * 60)
     print("🚀 Dynamic Database Migration Web App Starting...")

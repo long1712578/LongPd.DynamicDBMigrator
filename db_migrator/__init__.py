@@ -20,6 +20,15 @@ Quick start::
 """
 
 # Phase 2: Security modules
+# Phase 3: AI Agent modules
+from .agent import (
+    AnomalyDetector,
+    ErrorExplainer,
+    GeminiProvider,
+    MigrationAgent,
+    MockLLMProvider,
+    SmartMapper,
+)
 from .audit import AuditEvent, MigrationAuditLog
 from .config import MigrationConfig
 from .discovery import ColumnInfo as DiscoveryColumnInfo
@@ -52,7 +61,14 @@ __all__ = [
     "CredentialVault",
     "VaultError",
     "sanitize_identifier",
+    # AI Agent (Phase 3)
+    "MigrationAgent",
+    "GeminiProvider",
+    "MockLLMProvider",
+    "SmartMapper",
+    "AnomalyDetector",
+    "ErrorExplainer",
 ]
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 __author__ = "Pham Dinh Long"
