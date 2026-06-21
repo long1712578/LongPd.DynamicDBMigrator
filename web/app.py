@@ -8,8 +8,16 @@ Provides a clean, modern API and UI for:
 1. Discovering schemas from SQL files or live databases
 2. Visual drag-and-drop mapping
 3. Executing migrations asynchronously
+
+Security features (Phase 2):
+- Security Headers (CSP, X-Frame-Options, HSTS, etc.)
+- Input validation middleware
+- Audit trail logging
+- Rate limiting cho API endpoints
+- Flask secret key management
 """
 
+import logging
 import os
 import sys
 import threading
@@ -25,17 +33,155 @@ from db_migrator import (
     MigrationConfig,
     SchemaDiscovery,
 )
+from db_migrator.audit import MigrationAuditLog
+from db_migrator.security import CredentialVault
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# App initialization with security configuration
+# ---------------------------------------------------------------------------
+
+_vault = CredentialVault()  # Load .env file và ENV variables
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max for upload if used
+app.config['SECRET_KEY'] = _vault.get_flask_secret_key()  # Session signing key
+
 UPLOAD_FOLDER = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'alldatapostgre'))
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Audit log instance
+_audit = MigrationAuditLog()
+
+# ---------------------------------------------------------------------------
+# Rate Limiting Setup
+# ---------------------------------------------------------------------------
+try:
+    from flask_limiter import Limiter  # type: ignore[import]
+    from flask_limiter.util import get_remote_address  # type: ignore[import]
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["200 per hour", "50 per minute"],
+        storage_uri="memory://",  # in-memory storage (dev mode)
+    )
+except ImportError:
+    # flask-limiter optional — degrade gracefully
+    limiter = None  # type: ignore[assignment]
+    logger.warning("⚠️  flask-limiter not installed — rate limiting disabled")
 
 # Global state for background migration tasks
 # In a real production app, use Celery/Redis. For this internal tool, simple dict + thread is fine.
 _migration_tasks = {}
 _migration_tasks_lock = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Security Middleware: Headers & Audit
+# ---------------------------------------------------------------------------
+
+@app.after_request
+def add_security_headers(response):
+    """
+    Thêm Security Headers vào mọi HTTP response.
+
+    Tại sao cần Security Headers?
+    ----------------------------------
+    - X-Frame-Options: Ngăn Clickjacking attack (nhung iframe trang web vào trang khác)
+    - X-Content-Type-Options: Ngăn MIME sniffing (trình duyệt đoán sai content type)
+    - X-XSS-Protection: Bật XSS filter trình duyệt (legacy, nhưng vẫn hữu ích)
+    - Referrer-Policy: Kiểm soát thông tin Referer gửi đi
+    - Content-Security-Policy: White-list nguồn tài nguyên (script, style, image)
+
+    Tương đương .NET:
+      services.AddAntiforgery();
+      app.UseXContentTypeOptions();
+      app.UseXframe();
+      app.UseXXssProtection();
+    """
+    # Chặn Clickjacking: trang web không thể được nhun vào iframe
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+
+    # Ngăn MIME type sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+
+    # Bật XSS filter trình duyệt (hữu ích cho IE/Edge cũ)
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+
+    # Kiểm soát Referrer information
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+
+    # Content Security Policy — chặn inline script injection
+    # 'self': chỉ load tài nguyên từ cùng domain
+    # 'unsafe-inline': cần cho inline CSS (có thể bỏ sau khi refactor CSS ra file riêng)
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:;"
+    )
+
+    # Permissions Policy: tắt các web APIs không cần dùng
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+
+    return response
+
+
+@app.before_request
+def log_request():
+    """
+    Ghi audit log cho mọi API request.
+
+    Note: Chỉ log metadata (method, path, IP) — KHÔNG BAO GIờ log request body
+    vì có thể chứa passwords/credentials!
+    """
+    if request.path.startswith('/api/'):
+        payload_keys = list((request.json or {}).keys()) if request.is_json else []
+        _audit.log_api_request(
+            method=request.method,
+            path=request.path,
+            remote_addr=request.remote_addr or "unknown",
+            payload_keys=payload_keys,
+        )
+
+
+def _validate_db_config(config: dict, config_name: str = "config") -> tuple[bool, str]:
+    """
+    Validate cấu trúc và kiểu dữ liệu của database config.
+
+    Giảm thiểu rủi ro SSRF (Server-Side Request Forgery) bằng cách
+    kiểm tra các trường bắt buộc và kiểu dữ liệu.
+
+    Args:
+        config      : Dict cấu hình kết nối database
+        config_name : Tên config (cho thông báo lỗi)
+
+    Returns:
+        (is_valid, error_message)
+    """
+    required_fields = {'host', 'database', 'user', 'password'}
+    missing = required_fields - set(config.keys())
+    if missing:
+        return False, f"{config_name} thiếu các trường bắt buộc: {missing}"
+
+    # Kiểm tra host không được để trống (ngăn SSRF rõ ràng)
+    host = str(config.get('host', '')).strip()
+    if not host:
+        return False, f"{config_name}.host không được để trống"
+
+    # Kiểm tra port hợp lệ (1-65535)
+    port = config.get('port', 3306)
+    try:
+        port_int = int(port)
+        if not (1 <= port_int <= 65535):
+            return False, f"{config_name}.port phải trong khoảng 1-65535"
+    except (ValueError, TypeError):
+        return False, f"{config_name}.port phải là số nguyên"
+
+    return True, ""
 
 
 def _summarize_stats(stats: dict) -> dict:
@@ -71,6 +217,7 @@ def _serialize_schema(schema: dict) -> dict:
             'primary_key': ts.primary_key
         }
     return result
+
 
 @app.route('/')
 def index():

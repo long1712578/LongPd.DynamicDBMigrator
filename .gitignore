@@ -34,3 +34,19 @@ Thumbs.db
 # Migration input/output artifacts
 alldatapostgre/*.sql
 alldatapostgre/*.dump
+
+# Security: Credential Vault files (NEVER commit these!)
+.vault/
+*.vault
+*.enc
+*.key
+credentials.vault
+
+# Logs (audit trail, app logs)
+logs/
+*.jsonl
+
+# Coverage reports
+coverage.xml
+htmlcov/
+.coverage*

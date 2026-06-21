@@ -23,12 +23,16 @@ Public API
 from __future__ import annotations
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Giới hạn kích thước file SQL dump tối đa (2 GB)
+# Ngăn chặn tấn công DoS bằng cách upload file quá lớn
+_MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
 
 # ---------------------------------------------------------------------------
@@ -113,20 +117,50 @@ class SQLFileParser:
         self,
         filepath: str,
         tables: list[str] | None = None,
+        allowed_base_dir: str | None = None,
     ) -> dict[str, TableData]:
         """
         Parse *filepath* and return a dict of table_name → TableData.
 
         Args:
-            filepath : Path to .sql file.
-            tables   : If given, only parse these table names.
-                       If None, parse every table found in the file.
+            filepath        : Path to .sql file.
+            tables          : If given, only parse these table names.
+                              If None, parse every table found in the file.
+            allowed_base_dir: Nếu được cung cấp, kiểm tra filepath phải nằm trong
+                              thư mục này để ngăn chặn Path Traversal attack.
+                              Ví dụ: allowed_base_dir="./alldatapostgre"
+
+        Security:
+            - Path Traversal Prevention: Resolve đường dẫn tuyệt đối và
+              kiểm tra filepath nằm trong allowed_base_dir
+            - Max File Size: Từ chối file > 2GB để ngăn DoS
         """
-        if not os.path.exists(filepath):
+        # Security: Resolve đường dẫn thực để tránh path traversal (../ attack)
+        resolved = Path(filepath).resolve()
+
+        if not resolved.exists():
             raise FileNotFoundError(f"SQL file not found: {filepath}")
 
-        logger.info(f"📖 Reading file: {filepath}")
-        with open(filepath, encoding="utf-8", errors="replace") as f:
+        # Security: Kiểm tra path traversal nếu có allowed_base_dir
+        if allowed_base_dir:
+            base = Path(allowed_base_dir).resolve()
+            try:
+                resolved.relative_to(base)
+            except ValueError as e:
+                raise PermissionError(
+                    f"Path traversal detected: '{filepath}' is outside allowed directory '{allowed_base_dir}'"
+                ) from e
+
+        # Security: Kiểm tra kích thước file trước khi đọc
+        file_size = resolved.stat().st_size
+        if file_size > _MAX_FILE_SIZE_BYTES:
+            raise ValueError(
+                f"File too large: {file_size / (1024**3):.1f}GB exceeds "
+                f"maximum allowed {_MAX_FILE_SIZE_BYTES / (1024**3):.0f}GB"
+            )
+
+        logger.info("📖 Reading file: %s (%.1f MB)", filepath, file_size / (1024 * 1024))
+        with open(resolved, encoding="utf-8", errors="replace") as f:
             content = f.read()
 
         result: dict[str, TableData] = {}

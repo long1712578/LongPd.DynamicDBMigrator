@@ -19,16 +19,21 @@ Quick start::
     )
 """
 
+# Phase 2: Security modules
+from .audit import AuditEvent, MigrationAuditLog
 from .config import MigrationConfig
 from .discovery import ColumnInfo as DiscoveryColumnInfo
 from .discovery import MappingSuggestion, SchemaDiscovery, SchemaInfo, TableSchema
 from .migrator import DatabaseMigrator
+from .security import CredentialVault, VaultError
+from .security_utils import sanitize_identifier
 from .sql_parser import ColumnInfo as ParserColumnInfo
 from .sql_parser import SQLFileParser, TableData
 from .type_mapper import TypeMapper
 from .value_converter import ValueConverter
 
 __all__ = [
+    # Core
     "MigrationConfig",
     "SchemaDiscovery",
     "MappingSuggestion",
@@ -41,7 +46,13 @@ __all__ = [
     "ValueConverter",
     "DiscoveryColumnInfo",
     "ParserColumnInfo",
+    # Security (Phase 2)
+    "MigrationAuditLog",
+    "AuditEvent",
+    "CredentialVault",
+    "VaultError",
+    "sanitize_identifier",
 ]
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __author__ = "Pham Dinh Long"
