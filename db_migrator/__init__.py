@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 db_migrator/__init__.py
 =======================
@@ -21,9 +20,11 @@ Quick start::
 """
 
 from .config import MigrationConfig
-from .discovery import SchemaDiscovery, MappingSuggestion, SchemaInfo, TableSchema, ColumnInfo as DiscoveryColumnInfo
+from .discovery import ColumnInfo as DiscoveryColumnInfo
+from .discovery import MappingSuggestion, SchemaDiscovery, SchemaInfo, TableSchema
 from .migrator import DatabaseMigrator
-from .sql_parser import SQLFileParser, TableData, ColumnInfo as ParserColumnInfo
+from .sql_parser import ColumnInfo as ParserColumnInfo
+from .sql_parser import SQLFileParser, TableData
 from .type_mapper import TypeMapper
 from .value_converter import ValueConverter
 
@@ -38,6 +39,8 @@ __all__ = [
     "TableData",
     "TypeMapper",
     "ValueConverter",
+    "DiscoveryColumnInfo",
+    "ParserColumnInfo",
 ]
 
 __version__ = "1.0.0"

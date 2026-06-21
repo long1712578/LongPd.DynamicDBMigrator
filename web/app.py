@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 web/app.py
 ==========
@@ -15,15 +14,16 @@ import os
 import sys
 import threading
 import uuid
-from flask import Flask, render_template, request, jsonify
+
+from flask import Flask, jsonify, render_template, request
 
 # Ensure db_migrator is in Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from db_migrator import (
+    DatabaseMigrator,
     MigrationConfig,
     SchemaDiscovery,
-    DatabaseMigrator,
 )
 
 app = Flask(__name__)
@@ -86,19 +86,20 @@ def discover_from_file():
     """Discover schema from an uploaded or existing SQL dump file."""
     data = request.json or {}
     filename = data.get('filename')
-    
+
     if not filename:
         return jsonify({'success': False, 'message': 'Thiếu tên file'}), 400
-        
+
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     if not os.path.exists(filepath):
-        return jsonify({'success': False, 'message': f'Không tìm thấy file {filename} trong thư mục alldatapostgre/'}), 404
-        
+        msg = f"Không tìm thấy file {filename} trong thư mục alldatapostgre/"
+        return jsonify({"success": False, "message": msg}), 404
+
     try:
         disc = SchemaDiscovery()
         schema = disc.from_sql_file(filepath)
         result = _serialize_schema(schema)
-            
+
         return jsonify({
             'success': True,
             'schema': result,
@@ -113,12 +114,12 @@ def discover_from_mysql():
     config = request.json
     if not config:
         return jsonify({'success': False, 'message': 'Thiếu thông tin kết nối'}), 400
-        
+
     try:
         disc = SchemaDiscovery()
         schema = disc.from_mysql(config)
         result = _serialize_schema(schema)
-            
+
         return jsonify({'success': True, 'schema': result, 'tables': list(result.keys())})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -129,15 +130,15 @@ def discover_from_postgres():
     data = request.json or {}
     config = data.get('config')
     schema_name = data.get('schema', 'public')
-    
+
     if not config:
         return jsonify({'success': False, 'message': 'Thiếu thông tin kết nối'}), 400
-        
+
     try:
         disc = SchemaDiscovery()
         schema = disc.from_postgres(config, schema_name)
         result = _serialize_schema(schema)
-            
+
         return jsonify({'success': True, 'schema': result, 'tables': list(result.keys())})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -152,10 +153,10 @@ def suggest_mapping():
     data = request.json or {}
     source_schema_raw = data.get('source_schema', {})
     target_schema_raw = data.get('target_schema', {})
-    
+
     # Reconstruct SchemaInfo from raw dicts
-    from db_migrator.discovery import TableSchema, ColumnInfo
-    
+    from db_migrator.discovery import ColumnInfo, TableSchema
+
     def dict_to_schema(raw_dict):
         schema = {}
         for tbl_name, tbl_data in raw_dict.items():
@@ -165,22 +166,22 @@ def suggest_mapping():
             ts.primary_key = tbl_data.get('primary_key', [])
             schema[tbl_name] = ts
         return schema
-        
+
     src_schema = dict_to_schema(source_schema_raw)
     tgt_schema = dict_to_schema(target_schema_raw)
-    
+
     # Load existing mapping if any
     cfg = MigrationConfig()
     existing_table_mapping = cfg.table_mapping
     existing_column_mapping = cfg.column_mapping()
-    
+
     disc = SchemaDiscovery()
     suggestion = disc.suggest_mapping(src_schema, tgt_schema, existing_table_mapping, existing_column_mapping)
-    
+
     # Return serializable dict
     result = suggestion.to_config_dict()
     result['value_transforms'] = getattr(cfg, 'value_transforms', {})
-    
+
     return jsonify({
         'success': True,
         'mapping': result
@@ -190,27 +191,27 @@ def suggest_mapping():
 def save_mapping():
     """Save the updated mapping configuration."""
     data = request.json or {}
-    
+
     try:
         cfg = MigrationConfig()
-        
+
         # Replace mappings for edited tables (do not merge old column keys like id)
         new_table_map = data.get('table_mapping', {})
         new_col_map = data.get('column_mapping', {})
         new_transforms = data.get('value_transforms', {})
         target_schema = data.get('target_schema')
-        
+
         # We need to update the private _data dict to save it properly
         cfg_data = cfg._data
-        
+
         if target_schema:
             cfg_data['target_schema'] = target_schema
-            
+
         if 'table_mapping' not in cfg_data:
             cfg_data['table_mapping'] = {}
         for src_tbl, tgt_tbl in new_table_map.items():
             cfg_data['table_mapping'][src_tbl] = tgt_tbl
-        
+
         if 'column_mapping' not in cfg_data:
             cfg_data['column_mapping'] = {}
 
@@ -234,7 +235,7 @@ def save_mapping():
 
         if new_transforms:
             cfg_data['value_transforms'].update(new_transforms)
-            
+
         cfg.save()
         return jsonify({'success': True, 'message': 'Đã lưu cấu hình mapping'})
     except Exception as e:
@@ -248,7 +249,7 @@ def save_mapping():
 def start_migration():
     """Start an asynchronous migration task."""
     data = request.json or {}
-    
+
     task_id = str(uuid.uuid4())
     with _migration_tasks_lock:
         _migration_tasks[task_id] = {
@@ -260,7 +261,7 @@ def start_migration():
             'message': 'Đang khởi tạo...',
             'error': None
         }
-    
+
     # Extract params
     flow = data.get('flow', 'file_to_postgres') # 'file_to_postgres', 'file_to_mysql', 'mysql_to_postgres'
     sql_filename = data.get('sql_filename')
@@ -268,7 +269,7 @@ def start_migration():
     pg_config = data.get('pg_config')
     tables = data.get('tables') # list of table names
     strategy = data.get('strategy', 'truncate_insert')
-    
+
     def run_migration_task(task_id, flow, sql_filename, mysql_config, pg_config, tables, strategy):
         with _migration_tasks_lock:
             task = _migration_tasks.get(task_id)
@@ -276,35 +277,35 @@ def start_migration():
             return
         try:
             cfg = MigrationConfig()
-            
+
             def progress_cb(table, done, total, msg):
                 task['current_table'] = table
                 task['progress'] = int((done / total) * 100) if total > 0 else 100
                 task['message'] = f"[{table}] {msg}: {done}/{total}"
-                
+
             migrator = DatabaseMigrator(config=cfg, on_progress=progress_cb)
-            
+
             if flow == 'file_to_postgres':
                 if not sql_filename:
                     raise ValueError("Thiếu tên file SQL")
                 sql_filepath = os.path.join(app.config['UPLOAD_FOLDER'], sql_filename)
-                task['logs'].append(f"Starting pipeline: File -> MySQL -> PostgreSQL")
+                task['logs'].append("Starting pipeline: File -> MySQL -> PostgreSQL")
                 stats = migrator.migrate_file_to_postgres(sql_filepath, mysql_config, pg_config, tables, strategy)
-                
+
             elif flow == 'file_to_mysql':
                 if not sql_filename:
                     raise ValueError("Thiếu tên file SQL")
                 sql_filepath = os.path.join(app.config['UPLOAD_FOLDER'], sql_filename)
-                task['logs'].append(f"Starting import: File -> MySQL")
+                task['logs'].append("Starting import: File -> MySQL")
                 stats = migrator.migrate_file_to_mysql(sql_filepath, mysql_config, tables, strategy)
-                
+
             elif flow == 'mysql_to_postgres':
-                task['logs'].append(f"Starting sync: MySQL -> PostgreSQL")
+                task['logs'].append("Starting sync: MySQL -> PostgreSQL")
                 stats = migrator.migrate_mysql_to_postgres(mysql_config, pg_config, tables, strategy)
-                
+
             else:
                 raise ValueError(f"Unknown flow: {flow}")
-                
+
             task['stats'] = stats
             summary = _summarize_stats(stats)
             task['summary'] = summary
@@ -324,22 +325,22 @@ def start_migration():
             else:
                 task['status'] = 'completed'
                 task['message'] = 'Hoàn thành!'
-            
+
         except Exception as e:
             import traceback
             task['status'] = 'failed'
             task['error'] = str(e)
             task['logs'].append(traceback.format_exc())
             task['message'] = f"Lỗi: {str(e)}"
-    
+
     # Start thread
     thread = threading.Thread(
-        target=run_migration_task, 
+        target=run_migration_task,
         args=(task_id, flow, sql_filename, mysql_config, pg_config, tables, strategy)
     )
     thread.daemon = True
     thread.start()
-    
+
     return jsonify({
         'success': True,
         'task_id': task_id,
@@ -353,7 +354,7 @@ def get_migration_status(task_id):
         task = _migration_tasks.get(task_id)
     if not task:
         return jsonify({'success': False, 'message': 'Task not found'}), 404
-        
+
     return jsonify({
         'success': True,
         'status': task['status'],
@@ -370,4 +371,4 @@ if __name__ == '__main__':
     print("🚀 Dynamic Database Migration Web App Starting...")
     print(f"📂 Upload directory: {UPLOAD_FOLDER}")
     print("=" * 60)
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)  # nosec B201 B104 # noqa: S104, S201

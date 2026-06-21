@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "S", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=db_migrator --cov=web --cov-report=term-missing --cov-fail-under=80"
+
+[tool.bandit]
+targets = ["db_migrator", "web"]

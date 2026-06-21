@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 db_migrator/type_mapper.py
 ==========================
@@ -14,8 +13,6 @@ Handles MySQL ↔ PostgreSQL type conversion with:
 from __future__ import annotations
 
 import re
-from typing import Optional
-
 
 # ---------------------------------------------------------------------------
 # Type mapping tables

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 db_migrator/discovery.py
 ========================
@@ -145,8 +144,8 @@ class SchemaDiscovery:
         """
         try:
             import mysql.connector
-        except ImportError:
-            raise ImportError("mysql-connector-python is required. Run: pip install mysql-connector-python")
+        except ImportError as e:
+            raise ImportError("mysql-connector-python is required. Run: pip install mysql-connector-python") from e
 
         logger.info(f"🔍 Discovering MySQL schema: {config.get('host')}:{config.get('port')}/{config.get('database')}")
         conn = mysql.connector.connect(**config)
@@ -211,8 +210,8 @@ class SchemaDiscovery:
         """
         try:
             import psycopg2
-        except ImportError:
-            raise ImportError("psycopg2-binary is required. Run: pip install psycopg2-binary")
+        except ImportError as e:
+            raise ImportError("psycopg2-binary is required. Run: pip install psycopg2-binary") from e
 
         logger.info(f"🔍 Discovering PostgreSQL schema: {config.get('host')}/{config.get('database')}.{schema}")
         conn = psycopg2.connect(**config)
@@ -293,7 +292,7 @@ class SchemaDiscovery:
         This lets teams share just the .sql dump and have schema discovery
         without granting DB access.
         """
-        from .sql_parser import SQLFileParser, _COL_DEF_RE, _CREATE_TABLE_RE
+        from .sql_parser import _COL_DEF_RE, _CREATE_TABLE_RE
 
         logger.info(f"🔍 Discovering schema from SQL file: {filepath}")
 
@@ -301,7 +300,7 @@ class SchemaDiscovery:
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"File not found: {filepath}")
 
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        with open(filepath, encoding="utf-8", errors="replace") as f:
             content = f.read()
 
         result: SchemaInfo = {}
@@ -373,7 +372,7 @@ class SchemaDiscovery:
             if tgt_table and tgt_table in target_schema:
                 tgt_ts = target_schema[tgt_table]
                 tgt_col_norm = {self._norm(c.name): c.name for c in tgt_ts.columns}
-                
+
                 # Check for existing column mappings for this table
                 tbl_existing_cols = existing_cols.get(src_table, {})
                 assigned_tgt_cols = set()
@@ -384,22 +383,28 @@ class SchemaDiscovery:
                     if src_col in tbl_existing_cols:
                         tgt_col = tbl_existing_cols[src_col]
                         assigned_tgt_cols.add(tgt_col)
-                        tm.column_matches.append(ColumnMatch(source_col=src_col, target_col=tgt_col, confidence="exact"))
+                        tm.column_matches.append(
+                            ColumnMatch(source_col=src_col, target_col=tgt_col, confidence="exact")
+                        )
                         continue
-                        
+
                     tgt_col, col_confidence = self._match_name(src_col, tgt_col_norm, fuzzy=False)
                     if tgt_col:
                         assigned_tgt_cols.add(tgt_col)
-                        tm.column_matches.append(ColumnMatch(source_col=src_col, target_col=tgt_col, confidence=col_confidence))
+                        tm.column_matches.append(
+                            ColumnMatch(source_col=src_col, target_col=tgt_col, confidence=col_confidence)
+                        )
                     else:
                         pending_src_cols.append(src_col)
 
                 # Pass 2: Fuzzy matches for remaining
                 for src_col in pending_src_cols:
-                    tgt_col, col_confidence = self._match_name(src_col, tgt_col_norm, fuzzy=True, exclude_targets=assigned_tgt_cols)
+                    tgt_col, col_confidence = self._match_name(
+                        src_col, tgt_col_norm, fuzzy=True, exclude_targets=assigned_tgt_cols
+                    )
                     if tgt_col:
                         assigned_tgt_cols.add(tgt_col)
-                        
+
                     tm.column_matches.append(
                         ColumnMatch(
                             source_col=src_col,

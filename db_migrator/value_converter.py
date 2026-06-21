@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 db_migrator/value_converter.py
 ==============================
@@ -33,8 +32,7 @@ import re
 import uuid as _uuid_mod
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Optional
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Base Transform
@@ -391,7 +389,7 @@ class ValueConverter:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_config(cls, config, type_mapper=None) -> "ValueConverter":
+    def from_config(cls, config, type_mapper=None) -> ValueConverter:
         """
         Build a ValueConverter from a MigrationConfig instance.
         Also accepts a plain dict with a "value_transforms" key.

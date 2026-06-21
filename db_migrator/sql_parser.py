@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 db_migrator/sql_parser.py
 =========================
@@ -27,7 +26,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +126,7 @@ class SQLFileParser:
             raise FileNotFoundError(f"SQL file not found: {filepath}")
 
         logger.info(f"📖 Reading file: {filepath}")
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        with open(filepath, encoding="utf-8", errors="replace") as f:
             content = f.read()
 
         result: dict[str, TableData] = {}
@@ -225,6 +224,7 @@ class SQLFileParser:
         current_row: list[str] = []
         current_val = ""
         in_string = False
+        in_row = False
         quote_char = ""
         i = 0
 
@@ -248,22 +248,29 @@ class SQLFileParser:
                     current_val += ch
             else:
                 if ch in ("'", '"'):
-                    in_string = True
-                    quote_char = ch
-                    current_val += ch
-                elif ch == "," :
-                    current_row.append(current_val.strip())
-                    current_val = ""
+                    if in_row:
+                        in_string = True
+                        quote_char = ch
+                        current_val += ch
                 elif ch == "(":
-                    current_val = ""  # start of new row
-                elif ch == ")":
-                    current_row.append(current_val.strip())
-                    if current_row:
-                        rows.append(tuple(current_row))
+                    in_row = True
                     current_row = []
                     current_val = ""
+                elif ch == ")":
+                    if in_row:
+                        current_row.append(current_val.strip())
+                        if current_row:
+                            rows.append(tuple(current_row))
+                        current_row = []
+                        current_val = ""
+                        in_row = False
+                elif ch == ",":
+                    if in_row:
+                        current_row.append(current_val.strip())
+                        current_val = ""
                 elif ch not in (" ", "\n", "\r", "\t"):
-                    current_val += ch
+                    if in_row:
+                        current_val += ch
 
             i += 1
 

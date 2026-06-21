@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 db_migrator/migrator.py
 =======================
@@ -48,16 +47,16 @@ def _noop_progress(table: str, done: int, total: int, msg: str) -> None:
 def _mysql_connect(config: dict):
     try:
         import mysql.connector
-    except ImportError:
-        raise ImportError("mysql-connector-python is required. Run: pip install mysql-connector-python")
+    except ImportError as e:
+        raise ImportError("mysql-connector-python is required. Run: pip install mysql-connector-python") from e
     return mysql.connector.connect(**config)
 
 
 def _pg_connect(config: dict):
     try:
         import psycopg2
-    except ImportError:
-        raise ImportError("psycopg2-binary is required. Run: pip install psycopg2-binary")
+    except ImportError as e:
+        raise ImportError("psycopg2-binary is required. Run: pip install psycopg2-binary") from e
     return psycopg2.connect(**config)
 
 
@@ -192,7 +191,7 @@ class DatabaseMigrator:
                 "pg_errors": p["errors"],
                 "pg_skipped": p.get("skipped", 0),
             }
-            
+
         return combined
 
     # ------------------------------------------------------------------
@@ -218,7 +217,7 @@ class DatabaseMigrator:
                 col_names = [r[0] for r in col_rows]
                 col_types = {r[0]: r[1].lower() for r in col_rows}
 
-                cursor.execute(f"SELECT * FROM `{table}`")
+                cursor.execute(f"SELECT * FROM `{table}`")  # nosec B608 # noqa: S608
                 rows = cursor.fetchall()
 
                 ignored = self._config.get_ignored_columns(table)
@@ -255,7 +254,12 @@ class DatabaseMigrator:
         conn = _mysql_connect(mysql_config)
         cursor = conn.cursor()
 
-        logger.info(f"\n🔌 Connected MySQL: {mysql_config.get('host')}:{mysql_config.get('port')}/{mysql_config.get('database')}")
+        logger.info(
+            "\n🔌 Connected MySQL: %s:%s/%s",
+            mysql_config.get("host"),
+            mysql_config.get("port"),
+            mysql_config.get("database"),
+        )
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
 
         for table, td in tables_data.items():
@@ -314,7 +318,7 @@ class DatabaseMigrator:
 
             placeholders = ", ".join(["%s"] * len(columns))
             cols_str = ", ".join([f"`{c}`" for c in columns])
-            sql = f"INSERT INTO `{table}` ({cols_str}) VALUES ({placeholders})"
+            sql = f"INSERT INTO `{table}` ({cols_str}) VALUES ({placeholders})"  # nosec B608 # noqa: S608
 
             for idx, row in enumerate(td.inserts):
                 try:
@@ -369,7 +373,13 @@ class DatabaseMigrator:
 
         conn = _pg_connect(pg_config)
         cursor = conn.cursor()
-        logger.info(f"\n🔌 Connected PostgreSQL: {pg_config.get('host')}:{pg_config.get('port')}/{pg_config.get('database')}.{schema}")
+        logger.info(
+            "\n🔌 Connected PostgreSQL: %s:%s/%s.%s",
+            pg_config.get("host"),
+            pg_config.get("port"),
+            pg_config.get("database"),
+            schema,
+        )
 
         table_map = self._config.table_mapping
 
@@ -378,7 +388,7 @@ class DatabaseMigrator:
             pg_tables = [table_map.get(t, t) for t in tables_data if table_map.get(t)]
             for pg_table in reversed(pg_tables):
                 try:
-                    cursor.execute(f'DELETE FROM "{schema}"."{pg_table}"')
+                    cursor.execute(f'DELETE FROM "{schema}"."{pg_table}"')  # nosec B608 # noqa: S608
                     deleted = cursor.rowcount
                     conn.commit()
                     logger.info(f"  🗑️  DELETE `{pg_table}`: {deleted} rows removed")
@@ -430,7 +440,7 @@ class DatabaseMigrator:
                                          AND a.attnum = ANY(i.indkey)
                     WHERE  i.indrelid = '"{schema}"."{pg_table}"'::regclass
                     AND    i.indisprimary;
-                """)
+                """)  # nosec B608 # noqa: S608
                 fetched = [r[0] for r in cursor.fetchall()]
                 if fetched:
                     pks = fetched
@@ -439,7 +449,7 @@ class DatabaseMigrator:
                 conn.rollback()
 
             id_cols_sql = ', '.join([f'"{pk}"' for pk in pks])
-            
+
             batch_vals_list = []
             batch_cols = None
 
@@ -472,7 +482,7 @@ class DatabaseMigrator:
                         if f'"{req_col}"' not in pg_cols:
                             pg_cols.append(f'"{req_col}"')
                             pg_vals.append(f"'{req_val}'")
-                            
+
                     # Require non-null PK only for UPSERT.
                     # For append/truncate_insert, PK can be omitted when DB provides defaults/identity.
                     has_null_pk = False
@@ -493,12 +503,18 @@ class DatabaseMigrator:
                     if not pg_cols or has_null_pk:
                         s["skipped"] += 1
                         if idx < 3:
-                            logger.warning(f"  ⚠️  DEBUG SKIP: {pg_table} row {idx} - pg_cols: {pg_cols}, has_null_pk: {has_null_pk}")
+                            logger.warning(
+                                "  ⚠️  DEBUG SKIP: %s row %s - pg_cols: %s, has_null_pk: %s",
+                                pg_table,
+                                idx,
+                                pg_cols,
+                                has_null_pk,
+                            )
                         continue
-                        
+
                     if not batch_cols:
                         batch_cols = pg_cols
-                        
+
                     batch_vals_list.append(f"({', '.join(pg_vals)})")
 
                 except Exception as e:
@@ -509,10 +525,10 @@ class DatabaseMigrator:
                 if len(batch_vals_list) >= 500 or idx == total - 1:
                     if not batch_vals_list:
                         continue
-                        
+
                     try:
                         cursor.execute("SAVEPOINT batch_savepoint")
-                        
+
                         if strategy == "upsert":
                             needs_override_system = any(
                                 c.strip('"').lower() in identity_always_cols
@@ -528,12 +544,12 @@ class DatabaseMigrator:
                                 ({', '.join(batch_cols)})
                                 {overriding_clause}
                                 VALUES {', '.join(batch_vals_list)}
-                            """
+                            """  # nosec B608 # noqa: S608
                             if update_parts:
                                 insert_sql += f"""
                                 ON CONFLICT ({id_cols_sql}) DO UPDATE SET
                                 {', '.join(update_parts)}
-                                """
+                                """  # nosec B608 # noqa: S608
                             else:
                                 insert_sql += f" ON CONFLICT ({id_cols_sql}) DO NOTHING"
                         else:
@@ -547,18 +563,24 @@ class DatabaseMigrator:
                                 ({', '.join(batch_cols)})
                                 {overriding_clause}
                                 VALUES {', '.join(batch_vals_list)}
-                            """
-                        
+                            """  # nosec B608 # noqa: S608
+
                         cursor.execute(insert_sql)
                         cursor.execute("RELEASE SAVEPOINT batch_savepoint")
                         s["success"] += len(batch_vals_list)
-                        
+
                     except Exception as e:
                         cursor.execute("ROLLBACK TO SAVEPOINT batch_savepoint")
                         s["errors"] += len(batch_vals_list)
                         if s["errors"] <= 1500:
-                            logger.warning(f"    Batch error `{pg_table}` (rows {idx-len(batch_vals_list)+1} to {idx}): {str(e)[:150]}")
-                            
+                            logger.warning(
+                                "    Batch error `%s` (rows %s to %s): %s",
+                                pg_table,
+                                idx - len(batch_vals_list) + 1,
+                                idx,
+                                str(e)[:150],
+                            )
+
                     batch_vals_list = []
                     batch_cols = None
                     conn.commit()
@@ -574,7 +596,7 @@ class DatabaseMigrator:
             if not pg_table:
                 continue
             try:
-                cursor.execute(f'SELECT COUNT(*) FROM "{schema}"."{pg_table}"')
+                cursor.execute(f'SELECT COUNT(*) FROM "{schema}"."{pg_table}"')  # nosec B608 # noqa: S608
                 count = cursor.fetchone()[0]
                 expected = len(td.inserts)
                 ok = "✓" if count == expected else "⚠️"

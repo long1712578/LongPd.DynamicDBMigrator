@@ -6,82 +6,17 @@
   },
   "column_mapping": {
     "users": {
+      "id": "id",
       "name": "name",
       "email": "email",
       "created_at": "createdate"
     }
   },
-  "type_overrides": {
-    "user.types": "jsonb",
-    "user_movement.type": "integer"
-  },
-  "value_transforms": {
-    "*.deletedAt -> *.IsDeleted": {
-      "type": "null_to_bool"
-    },
-    "user.types -> *.Types": {
-      "type": "json_normalize",
-      "default": "[]",
-      "cast": "jsonb"
-    },
-    "user_movement.type -> *.Type": {
-      "type": "enum_to_int",
-      "mapping": {
-        "Bổ nhiệm": 1,
-        "Điều chuyển": 2,
-        "Miễn nhiệm": 3
-      }
-    },
-    "*.createdAt -> *.SyncCreatedDate": {
-      "type": "timestamp"
-    },
-    "*.updatedAt -> *.SyncUpdatedDate": {
-      "type": "timestamp"
-    },
-    "*.dateOnboard -> *.DateOnboard": {
-      "type": "timestamp"
-    },
-    "*.dateEndWork -> *.DateEndWork": {
-      "type": "timestamp"
-    },
-    "*.birthday -> *.Birthday": {
-      "type": "timestamp"
-    },
-    "*.dateAppointment -> *.AppointmentDate": {
-      "type": "timestamp"
-    },
-    "org_unit.createdAt -> office-org-unit.SyncCreatedDate": {
-      "type": "timestamp"
-    },
-    "org_unit.updatedAt -> office-org-unit.SyncUpdatedDate": {
-      "type": "timestamp"
-    },
-    "org_unit.deletedAt -> office-org-unit.IsDeleted": {
-      "type": "null_to_bool"
-    }
-  },
+  "type_overrides": {},
+  "value_transforms": {},
   "custom_rules": {
-    "enum_mapping": {
-      "user_movement": {
-        "type": {
-          "Bổ nhiệm": "1",
-          "Miễn nhiệm": "3",
-          "Điều chuyển": "2"
-        }
-      }
-    },
-    "ignored_source_columns": {
-      "user": [
-        "factory"
-      ]
-    },
-    "required_defaults": {
-      "office-org-unit": {
-        "TotalMember": "0"
-      },
-      "office-position": {
-        "Level": "1"
-      }
-    }
+    "enum_mapping": {},
+    "required_defaults": {},
+    "ignored_source_columns": {}
   }
 }

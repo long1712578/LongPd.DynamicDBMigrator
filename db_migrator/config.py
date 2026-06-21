@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 db_migrator/config.py
 =====================
@@ -204,7 +203,7 @@ class MigrationConfig:
         if not os.path.exists(self._path):
             return dict(_EMPTY_CONFIG)
 
-        with open(self._path, "r", encoding="utf-8") as f:
+        with open(self._path, encoding="utf-8") as f:
             raw: dict[str, Any] = json.load(f)
 
         return self._migrate_v1_to_v2(raw)
